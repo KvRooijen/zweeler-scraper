@@ -247,12 +247,15 @@ def scrape_game_stats(game_code, game_name):
             log(f"  Found {len(entries)} player entries")
             
             for entry in entries:
-                # Entry format: [rank, flag_info, player_info, team, selection_stats]
+                # Entry format: [rank, flag_info, player_info, team, price, selection_stats]
+                # Example: [300, {"type": "flag", "countryCode": "ES"}, {...}, "Team Name", "1.2 mln.", "1&nbsp;x&nbsp;(1%)"]
+                # Or: [14, {...}, {...}, "Team Name", "C", "24&nbsp;x&nbsp;(46%)"]
                 if len(entry) >= 5:
                     rank = entry[0]
                     player_info = entry[2] if isinstance(entry[2], dict) else {}
                     team = entry[3] if len(entry) > 3 else ''
-                    selection_stats = entry[4] if len(entry) > 4 else ''
+                    price = entry[4] if len(entry) > 4 else ''  # Can be "1.2 mln." or letter like "C"
+                    selection_stats = entry[5] if len(entry) > 5 else ''  # "1&nbsp;x&nbsp;(1%)"
                     
                     player_name = player_info.get('sportsmen_name', '').strip()
                     player_url = player_info.get('sportsment_url', '')
@@ -264,6 +267,17 @@ def scrape_game_stats(game_code, game_name):
                         if id_match:
                             player_id = id_match.group(1)
                     
+                    # Extract number of picks from selection_stats
+                    # Format: "1&nbsp;x&nbsp;(1%)" or "24&nbsp;x&nbsp;(46%)"
+                    picks = None
+                    if selection_stats:
+                        picks_match = re.search(r'^(\d+(?:\.\d+)?)', str(selection_stats))
+                        if picks_match:
+                            try:
+                                picks = int(picks_match.group(1))
+                            except ValueError:
+                                picks = None
+                    
                     stats_records.append({
                         'game_code': game_code,
                         'player_id': player_id,
@@ -271,6 +285,8 @@ def scrape_game_stats(game_code, game_name):
                         'player_url': player_url,
                         'team': team,
                         'rank': rank,
+                        'price': price,
+                        'picks': picks,
                         'selection_stats': selection_stats,
                         'on_startlist': player_info.get('onStartlist', False),
                         'stats_data_json': json.dumps(entry),
