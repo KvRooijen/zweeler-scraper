@@ -23,7 +23,7 @@ def log(message, level="INFO"):
 def scrape_game_list(year):
     """
     Scrape game list from Zweeler calendar for a given year.
-    Returns a list of dictionaries with game_id (slug), game_name, and game_url.
+    Returns a list of dictionaries with game_code (numeric ID) and game_name.
     """
     url = f"{BASE_URL}/main/calendar/sport/cycling/year/{year}"
     log(f"Scraping game list for {year} from {url}")
@@ -36,47 +36,36 @@ def scrape_game_list(year):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Find all game links - they follow pattern /game/{type}/{slug}/
-        game_links = soup.find_all('a', href=re.compile(r'/game/(cycling|cyclingTour)/[^/]+/?'))
+        # Find all game links - they follow pattern /results/{game_code}
+        game_links = soup.find_all('a', href=re.compile(r'/results/\d+'))
         log(f"Found {len(game_links)} raw game link elements")
         
         games = []
-        seen_slugs = set()
+        seen_codes = set()
         
         for link in game_links:
             href = link.get('href', '')
             
-            # Skip editTeams and other action links
-            if 'editTeams' in href or '?' in href:
-                continue
-            
-            # Extract game type and slug from URL
-            match = re.search(r'/game/(cycling|cyclingTour)/([^/]+)/?', href)
+            # Extract numeric game code from URL
+            match = re.search(r'/results/(\d+)', href)
             if match:
-                game_type = match.group(1)
-                game_slug = match.group(2)
+                game_code = match.group(1)
                 
-                # Create a composite ID
-                game_id = f"{game_type}_{game_slug}"
-                
-                if game_id not in seen_slugs:
-                    seen_slugs.add(game_id)
+                if game_code not in seen_codes:
+                    seen_codes.add(game_code)
                     
                     # Get game name from link text
                     game_name = link.get_text(strip=True)
                     if not game_name:
-                        game_name = game_slug
+                        game_name = f"Game {game_code}"
                     
                     games.append({
-                        'game_id': game_id,
-                        'game_slug': game_slug,
-                        'game_type': game_type,
+                        'game_code': game_code,
                         'game_name': game_name,
-                        'game_url': href if href.startswith('http') else BASE_URL + href,
                         'year': year,
                         'scraped_at': datetime.now().isoformat()
                     })
-                    log(f"  + Added game: {game_id} - {game_name}")
+                    log(f"  + Added game: {game_code} - {game_name}")
         
         log(f"✓ Successfully scraped {len(games)} unique games for {year}")
         return games
@@ -96,14 +85,14 @@ def scrape_game_list(year):
         log(f"Waiting {RATE_LIMIT_SECONDS} seconds (rate limit)...")
         time.sleep(RATE_LIMIT_SECONDS)
 
-def scrape_game_details(game_id, game_slug, game_type):
+def scrape_game_details(game_code, game_name):
     """
     Scrape static game details from the API.
-    Uses the gameDetails endpoint which requires the game slug.
+    Uses the numeric game code.
     """
-    # The API endpoint format: /api/v1/gameDetails/{game_slug}/gameDetails/EUR
-    url = f"{BASE_URL}/api/v1/gameDetails/{game_slug}/gameDetails/EUR"
-    log(f"Scraping details for {game_id} (slug: {game_slug})")
+    # The API endpoint format: /api/v1/gameDetails/{game_code}/gameDetails/EUR
+    url = f"{BASE_URL}/api/v1/gameDetails/{game_code}/gameDetails/EUR"
+    log(f"Scraping details for {game_code} ({game_name})")
     log(f"  URL: {url}")
     
     try:
@@ -117,10 +106,8 @@ def scrape_game_details(game_id, game_slug, game_type):
         
         # Extract relevant fields from the API response
         game_details = {
-            'game_id': game_id,
-            'game_slug': game_slug,
-            'game_type': game_type,
-            'game_name': data.get('gameName', ''),
+            'game_code': game_code,
+            'game_name': data.get('gameName', game_name),
             'base_url': data.get('baseUrl', ''),
             'start_date_time': data.get('startDateAndTime', ''),
             'price_per_team': data.get('pricePerTeam', ''),
@@ -157,13 +144,13 @@ def scrape_game_details(game_id, game_slug, game_type):
         log(f"  Waiting {RATE_LIMIT_SECONDS} seconds (rate limit)...")
         time.sleep(RATE_LIMIT_SECONDS)
 
-def scrape_game_stats(game_id, game_slug, game_type):
+def scrape_game_stats(game_code, game_name):
     """
     Scrape dynamic game stats (player popularity, selections) from the API.
-    Uses the mostPopular endpoint.
+    Uses the numeric game code.
     """
-    url = f"{BASE_URL}/api/v1/gameDetails/{game_slug}/mostPopular"
-    log(f"Scraping stats for {game_id} (slug: {game_slug})")
+    url = f"{BASE_URL}/api/v1/gameDetails/{game_code}/mostPopular"
+    log(f"Scraping stats for {game_code} ({game_name})")
     log(f"  URL: {url}")
     
     try:
@@ -202,8 +189,7 @@ def scrape_game_stats(game_id, game_slug, game_type):
                             player_id = id_match.group(1)
                     
                     stats_records.append({
-                        'game_id': game_id,
-                        'game_slug': game_slug,
+                        'game_code': game_code,
                         'player_id': player_id,
                         'player_name': player_name,
                         'player_url': player_url,
@@ -269,13 +255,12 @@ def main():
     all_stats = []
     
     for i, game in enumerate(games, 1):
-        log(f"\n[{i}/{len(games)}] Processing: {game['game_id']}")
-        game_id = game['game_id']
-        game_slug = game['game_slug']
-        game_type = game['game_type']
+        log(f"\n[{i}/{len(games)}] Processing: {game['game_code']} - {game['game_name']}")
+        game_code = game['game_code']
+        game_name = game['game_name']
         
         # Get details
-        details = scrape_game_details(game_id, game_slug, game_type)
+        details = scrape_game_details(game_code, game_name)
         if details:
             all_details.append(details)
             log(f"  ✓ Details scraped successfully")
@@ -283,7 +268,7 @@ def main():
             log(f"  ⚠ Details not available", "WARN")
         
         # Get stats
-        stats = scrape_game_stats(game_id, game_slug, game_type)
+        stats = scrape_game_stats(game_code, game_name)
         if stats:
             all_stats.extend(stats)
             log(f"  ✓ Stats scraped successfully ({len(stats)} players)")
